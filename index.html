@@ -9,6 +9,19 @@
     <body>
         <div class="container">
             <h1>Todo List</h1>
+
+            <!-- Add a form for inputting new todos -->
+            <form id="todoForm" class="todo-form">
+                <input
+                    type="text"
+                    id="todoInput"
+                    placeholder="What needs to be done?"
+                    required
+                    minlength="3"
+                >
+                <button type="submit">Add Todo</button>
+            </form>
+            
             <div id="todoList"></div>
         </div>
         <script src="app.js"></script>
