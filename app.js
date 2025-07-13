@@ -1,27 +1,75 @@
 const API_URL = 'https://jsonplaceholder.typicode.com/todos';
+
+// Add to the top of the file
+const STORAGE_KEY = 'todos-app';
+let currentFilter = 'all';
+let todoState = []; // Initialize todoState
+
+// Add localStorage functions
+function saveToLocalStorage() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(todoState));
+}
+
+function loadFromLocalStorage() {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+}
+
+// Add utility functions for UI feedback
+function showLoading() {
+    document.getElementById('loadingMessage').style.display = 'block';
+    document.getElementById('errorMessage').style.display = 'none';
+}
+
+function hideLoading() {
+    document.getElementById('loadingMessage').style.display = 'none';
+}
+
+function showError(message) {
+    const errorElement = document.getElementById('errorMessage');
+    errorElement.textContent = message;
+    errorElement.style.display = 'block';
+    setTimeout(() => {
+        errorElement.style.display = 'none';
+    }, 3000);
+}
+
+// Update fetchTodos to use localStorage
 async function fetchTodos() {
+    showLoading();
     try {
-        const response = await fetch(API_URL);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+        // Try loading from localStorage first
+        let todos = loadFromLocalStorage();
+
+        // If no stored todos, fetch from API
+        if (todos.length === 0) {
+            const response = await fetch(API_URL);
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            todos = await response.json();
+            todos = todos.slice(0, 10);
+            saveToLocalStorage();
         }
 
-        const todos = await response.json();
-        // Update our state when we get new data
-        todoState = todos.slice(0, 10);
+        todoState = todos;
         return todoState;
     } catch (error) {
-        console.error('Failed to fetch todos:', error);
+        showError('Failed to load todos. Please refresh the page.');
         return [];
+    } finally {
+        hideLoading();
+        updateTodoCount();
     }
 }
 
 function createTodoElement(todo) {
     const todoElement = document.createElement('div');
-    todoElement.classname = `todo-item ${todo.completed ? 'completed' : ''}`;
-    todoElement.id = `todo-${todo.id}`; // Unique ID for each todo
+    todoElement.className = `todo-item ${todo.completed ? 'completed' : ''}`; // Fixed typo: classname -> className
+    todoElement.id = `todo-${todo.id}`;
 
-    // Using semantic HTML: span for text, buttons for actions
     todoElement.innerHTML = `
         <span class="todo-text">${todo.title}</span>
         <div class="todo-actions">
@@ -37,47 +85,78 @@ function createTodoElement(todo) {
     return todoElement;
 }
 
-//  Update a single todo item
 function updateTodoElement(todo) {
-    // Find existing todo element by ID
     const todoElement = document.getElementById(`todo-${todo.id}`);
-    if (!todoElement) {
-        const newTodoElement = createTodoElement(todo); // Create a new element with updated data
-        todoElement.replaceWith(newTodoElement); // Replace the old element
+    if (todoElement) {
+        const newTodoElement = createTodoElement(todo);
+        todoElement.replaceWith(newTodoElement);
     }
 }
 
-// Separate function to render todos in a list format
-function renderTodoList(todos) {
-    const todoList = document.getElementById('todo-list');
-    todoList.innerHTML = ''; // Clear existing content
+// Update renderTodoList to accept filtered todos
+function renderTodoList(todos = todoState) {
+    const todoList = document.getElementById('todoList'); // Fixed ID consistency
+    todoList.innerHTML = '';
 
-    // If we have no todos, display a message
     if (todos.length === 0) {
         todoList.innerHTML = '<p>No todos found.</p>';
         return;
     }
 
-    // Create and append each todo element
     todos.forEach(todo => {
-        const todoElemnt = createTodoElement(todo);
+        const todoElement = createTodoElement(todo); // Fixed typo: todoElemnt -> todoElement
         todoList.appendChild(todoElement);
     });
 }
 
-// Event delegation for better performance
+// Add filtering functionality
+function filterTodos(filter = currentFilter) {
+    currentFilter = filter;
+
+    // Update filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+
+    // Filter todos
+    const filteredTodos = todoState.filter(todo => {
+        if (filter === 'active') return !todo.completed;
+        if (filter === 'completed') return todo.completed;
+        return true;
+    });
+
+    renderTodoList(filteredTodos);
+}
+
+// Update todo count
+function updateTodoCount() {
+    const activeCount = todoState.filter(todo => !todo.completed).length;
+    const countElement = document.getElementById('todoCount');
+    if (countElement) {
+        countElement.textContent = `${activeCount} item${activeCount !== 1 ? 's' : ''} left`;
+    }
+}
+
+// Add clear completed functionality
+function clearCompleted() {
+    const completedTodos = todoState.filter(todo => todo.completed);
+    
+    completedTodos.forEach(async todo => {
+        await deleteTodo(todo);
+    });
+}
+
 function handleTodoAction(event) {
-    // Find if a buttion was clicked
     const button = event.target.closest('button');
-    if (!button) return; // If no button was clicked, do nothing
-    const action = button.dataset.action; // Get the action from the button's data attribute
-    const todoElement = button.closest('.todo-item'); // Find the closest todo item element
-    const todoId = parseInt(todoElement.id.replace('todo-', '')); // Extract the todo ID
-    const todo = todoState.find(t => t.id === todoId); // Find the todo in our state
+    if (!button) return;
+    
+    const action = button.dataset.action;
+    const todoElement = button.closest('.todo-item');
+    const todoId = parseInt(todoElement.id.replace('todo-', ''));
+    const todo = todoState.find(t => t.id === todoId);
 
-    if (!todo) return; // If todo not found, do nothing
+    if (!todo) return;
 
-    // Perform action based on button clicked
     if (action === 'toggle') {
         toggleTodoStatus(todo);
     } else if (action === 'delete') {
@@ -85,67 +164,73 @@ function handleTodoAction(event) {
     }
 }
 
-// Todo completion status toggle
+// Update toggleTodoStatus
 async function toggleTodoStatus(todo) {
+    const todoElement = document.getElementById(`todo-${todo.id}`);
+    const toggleButton = todoElement.querySelector('.btn-toggle');
+    toggleButton.disabled = true;
+
     try {
-        // Send a request to update todo on a server
         const response = await fetch(`${API_URL}/${todo.id}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                completed: !todo.completed // Toggle the completed status
+                completed: !todo.completed
             })
         });
 
-        if (!response.ok) {
-            throw new Error('Failed to update todo');
-        }
+        if (!response.ok) throw new Error('Failed to update todo');
 
-        // Update local state (data)
-        todo.completed = !todo.completed; // Change from true to false or vice versa
-        updateTodoElement(todo); // Update the UI with new status
+        todo.completed = !todo.completed;
+        updateTodoElement(todo);
+        saveToLocalStorage();
+        updateTodoCount();
+        filterTodos();
+
     } catch (error) {
-        console.error('Error updating todo:', error);
-        alert('Failed to update todo. Please try again later.');
+        showError('Failed to update todo. Please try again.');
+        toggleButton.disabled = false;
     }
 }
 
+// Update deleteTodo
 async function deleteTodo(todo) {
+    const todoElement = document.getElementById(`todo-${todo.id}`);
+    todoElement.classList.add('deleting');
+
     try {
         const response = await fetch(`${API_URL}/${todo.id}`, {
-            method: 'DELETE',
+            method: 'DELETE'
         });
 
-        if (!response.ok) {
-            throw new Error('Failed to delete todo');
-        }
+        if (!response.ok) throw new Error('Failed to delete todo');
 
-        // Update local state
         todoState = todoState.filter(t => t.id !== todo.id);
-        // Update the UI by removing the todo element
-        const todoElement = document.getElementById(`todo-${todo.id}`);
-        todoElement.remove();
 
-        // Show "no todos" message if all are deleted
-        if (todoState.length === 0) {
-            document.getElementById('todo-list').innerHTML = '<p>No todos found.</p>';
-        }
+        todoElement.style.opacity = '0';
+        setTimeout(() => {
+            todoElement.remove();
+            saveToLocalStorage();
+            updateTodoCount();
+            if (todoState.length === 0) {
+                document.getElementById('todoList').innerHTML = '<p>No todos found.</p>';
+            }
+        }, 300);
 
     } catch (error) {
-        console.error('Error deleting todo:', error);
-        alert('Failed to delete todo. Please try again later.');
+        showError('Failed to delete todo. Please try again.');
+        todoElement.classList.remove('deleting');
     }
 }
 
-// Add form handling
 function initializeForm() {
     const form = document.getElementById('todoForm');
     const input = document.getElementById('todoInput');
 
     form.addEventListener('submit', async (event) => {
-        event.preventDefault(); // Prevent form submission
+        event.preventDefault();
         
         const todoText = input.value.trim();
 
@@ -154,21 +239,22 @@ function initializeForm() {
             return;
         }
 
-        // Create a new todo
         await createTodo(todoText);
-
-        // Clear the input field
         input.value = '';
     });
 }
 
+// Update createTodo
 async function createTodo(todoText) {
+    const submitButton = document.getElementById('submitButton');
+    submitButton.disabled = true;
+    submitButton.classList.add('loading');
+
     try {
-        // Prepare the new todo data
         const newTodo = {
             title: todoText,
             completed: false,
-            userId: 1  // Required by JSONPlaceholder
+            userId: 1
         };
 
         const response = await fetch(API_URL, {
@@ -184,48 +270,57 @@ async function createTodo(todoText) {
         }
 
         const createdTodo = await response.json();
-
-        // Since we're using JSONPlaceholder, it doesn't actually
-        // create a new todo. In a real app, we'd use the server's
-        // response(Which would be the created todo itself). 
-        // Here, we'll simulate a new todo:
         const simulatedTodo = {
             ...createdTodo,
-            id: Date.now(), // Generate a unique ID
+            id: Date.now(),
         };
 
-        // Add to our state
-        todoState.unshift(simulatedTodo); // Add to beginning of array
+        todoState.unshift(simulatedTodo);
 
-        // Create new element and add to DOM
         const todoElement = createTodoElement(simulatedTodo);
         const todoList = document.getElementById('todoList');
+
+        todoElement.style.opacity = '0';
         todoList.insertBefore(todoElement, todoList.firstChild);
+        requestAnimationFrame(() => {
+            todoElement.style.opacity = '1';
+        });
+
+        saveToLocalStorage();
+        updateTodoCount();
+        filterTodos();
 
     } catch (error) {
-        console.error('Error creating todo:', error);
-        alert('Failed to create todo. Please try again.');
+        showError('Failed to create todo. Please try again.');
+    } finally {
+        submitButton.disabled = false;
+        submitButton.classList.remove('loading');
     }
 }
 
-// Update initializeApp to include form initialization
+// Update initializeApp
 function initializeApp() {
-    // Initialize form
     initializeForm();
 
-    // Existing initialization
-    document.getElementById('todoList')
-        .addEventListener('click', handleTodoAction);
+    // Initialize filters
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => filterTodos(btn.dataset.filter));
+    });
 
-    fetchTodos().then(renderTodoList);
-}
+    // Initialize clear completed
+    const clearCompletedBtn = document.getElementById('clearCompleted');
+    if (clearCompletedBtn) {
+        clearCompletedBtn.addEventListener('click', clearCompleted);
+    }
 
-// Initialize our app
-function initializeApp() {
-    document.getElementById('todoList').addEventListener('Click', handleTodoAction);
+    // Initialize todo list
+    document.getElementById('todoList').addEventListener('click', handleTodoAction);
 
     // Load initial todos
-    fetchTodos().then(renderTodoList);
+    fetchTodos().then(() => {
+        filterTodos('all');
+        updateTodoCount();
+    });
 }
 
 document.addEventListener('DOMContentLoaded', initializeApp);
